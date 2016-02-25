@@ -1245,47 +1245,6 @@ int32_t QCameraParameters::setPreviewSize(const QCameraParameters& params)
 }
 
 /*===========================================================================
- * FUNCTION   : updateViewAngle
- *
- * DESCRIPTION: update horizontal view angle for CTS based on snapshot res
- *
- * PARAMETERS : int width
-                int height
- *
- * RETURN     :
- *==========================================================================*/
-void QCameraParameters::updateViewAngle(int width, int height)
-{
-    float max_widthf = m_pCapability->picture_sizes_tbl[m_pCapability->picture_sizes_tbl_cnt-1].width;
-    float max_heightf = m_pCapability->picture_sizes_tbl[m_pCapability->picture_sizes_tbl_cnt-1].height;
-    float widthf = width;
-    float heightf = height;
-    float new_ar = widthf/heightf;
-    float native_ar = max_widthf/max_heightf;
-    float native_hfov = m_pCapability->hor_view_angle;
-    float hor_view_angle;
-    float view_ratio; //math intermediate
-    float intermediate_angle; //math intermediate
-
-    if(width <= 0 || height <= 0) {
-        ALOGE("%s: width is %d and height is %d", __func__, width, height);
-        return;
-    }
-
-    //0.01 float fudge
-    if(new_ar + 0.01f < native_ar) {
-        //Aspect ratio less than native implies horizontal crop so update FOV
-        view_ratio = tan((3.14159f/180.0f) * native_hfov/2);
-        intermediate_angle = atan((new_ar)*view_ratio/(native_ar));
-        hor_view_angle = (180.0f/3.14159f) * 2 * intermediate_angle;
-        setFloat(KEY_HORIZONTAL_VIEW_ANGLE, hor_view_angle);
-    } else {
-        setFloat(KEY_HORIZONTAL_VIEW_ANGLE, native_hfov);
-    }
-
-}
-
-/*===========================================================================
  * FUNCTION   : setPictureSize
  *
  * DESCRIPTION: set picture size from user setting
@@ -1319,7 +1278,6 @@ int32_t QCameraParameters::setPictureSize(const QCameraParameters& params)
                 // set the new value
                 CDBG_HIGH("%s: Requested picture size %d x %d", __func__, width, height);
                 CameraParameters::setPictureSize(width, height);
-                updateViewAngle(width, height);
                 return NO_ERROR;
             }
         }
@@ -1339,7 +1297,6 @@ int32_t QCameraParameters::setPictureSize(const QCameraParameters& params)
             sprintf(val, "%dx%d", width, height);
             CDBG_HIGH("%s: picture size requested %s", __func__, val);
             updateParamEntry(KEY_PICTURE_SIZE, val);
-            updateViewAngle(width, height);
             return NO_ERROR;
         }
     }
@@ -4928,7 +4885,8 @@ int32_t QCameraParameters::initDefaultParameters()
         info.freeram);
     if (info.totalram > TOTAL_RAM_SIZE_512MB) {
         set(KEY_QC_LONGSHOT_SUPPORTED, VALUE_TRUE);
-        set(KEY_QC_ZSL_HDR_SUPPORTED, VALUE_TRUE);
+        //Disable HDR in ZSL support for Lettuce. Buggy and little benefit.
+        set(KEY_QC_ZSL_HDR_SUPPORTED, VALUE_FALSE);
     } else {
         set(KEY_QC_LONGSHOT_SUPPORTED, VALUE_FALSE);
         set(KEY_QC_ZSL_HDR_SUPPORTED, VALUE_FALSE);
@@ -4990,11 +4948,22 @@ int32_t QCameraParameters::init(cam_capability_t *capabilities,
     }
     m_pParamBuf = (parm_buffer_new_t*) DATA_PTR(m_pParamHeap,0);
 
-    initDefaultParameters();
+    rc = initDefaultParameters();
+    if (rc < 0) {
+        ALOGE("%s: failed to set default parameters", __func__);
+        rc = FAILED_TRANSACTION;
+        goto TRANS_INIT_ERROR3;
+    }
 
     m_bInited = true;
 
     goto TRANS_INIT_DONE;
+
+TRANS_INIT_ERROR3:
+    m_pCamOpsTbl->ops->unmap_buf(
+                         m_pCamOpsTbl->camera_handle,
+                         CAM_MAPPING_BUF_TYPE_PARM_BUF);
+    m_pParamBuf = NULL;
 
 TRANS_INIT_ERROR2:
     m_pParamHeap->deallocate();
@@ -5002,6 +4971,7 @@ TRANS_INIT_ERROR2:
 TRANS_INIT_ERROR1:
     delete m_pParamHeap;
     m_pParamHeap = NULL;
+    m_pCamOpsTbl = NULL;
 
 TRANS_INIT_DONE:
     return rc;
