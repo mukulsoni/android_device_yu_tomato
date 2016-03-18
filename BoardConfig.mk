@@ -63,7 +63,7 @@ endif
 endif
 
 # GPS
-TARGET_GPS_HAL_PATH := $(DEVICE_PATH)/gps
+USE_DEVICE_SPECIFIC_GPS := true
 TARGET_NO_RPC := true
 
 # init
